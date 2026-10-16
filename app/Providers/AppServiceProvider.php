@@ -1,0 +1,170 @@
+<?php
+
+namespace App\Providers;
+
+use App\Health\Checks\MonitorCheckDriftCheck;
+use App\Jobs\CalculateMonitorStatisticsJob;
+use App\Listeners\BroadcastMonitorStatusChange;
+use App\Listeners\DispatchConfirmationCheck;
+use App\Listeners\NotifyStatusPageSubscribersOnStatusChange;
+use App\Listeners\SendCustomMonitorNotification;
+use App\Listeners\StoreMonitorCheckData;
+use App\Models\User;
+use Illuminate\Console\Events\ScheduledTaskSkipped;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\ServiceProvider;
+use Illuminate\View\FileViewFinder;
+use Laravel\Nightwatch\Facades\Nightwatch;
+use Laravel\Nightwatch\Records\Query;
+use Laravel\Nightwatch\Records\QueuedJob;
+use Opcodes\LogViewer\Facades\LogViewer;
+use Spatie\CpuLoadHealthCheck\CpuLoadCheck;
+use Spatie\Health\Checks\Checks\CacheCheck;
+use Spatie\Health\Checks\Checks\DatabaseCheck;
+use Spatie\Health\Checks\Checks\OptimizedAppCheck;
+use Spatie\Health\Checks\Checks\QueueCheck;
+use Spatie\Health\Checks\Checks\RedisCheck;
+use Spatie\Health\Checks\Checks\RedisMemoryUsageCheck;
+use Spatie\Health\Checks\Checks\ScheduleCheck;
+use Spatie\Health\Checks\Checks\UsedDiskSpaceCheck;
+use Spatie\Health\Facades\Health;
+use Spatie\UptimeMonitor\Events\UptimeCheckFailed;
+use Spatie\UptimeMonitor\Events\UptimeCheckRecovered;
+use Spatie\UptimeMonitor\Events\UptimeCheckSucceeded;
+
+class AppServiceProvider extends ServiceProvider
+{
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+        // Override Inertia page paths to use lowercase 'pages' directory after package loads
+        $this->app->booted(function () {
+            config([
+                'inertia.page_paths' => [resource_path('js/pages')],
+                'inertia.testing.page_paths' => [resource_path('js/pages')],
+            ]);
+
+            // Rebind the testing view finder with correct paths
+            $this->app->bind('inertia.testing.view-finder', function ($app) {
+                return new FileViewFinder(
+                    $app['files'],
+                    [resource_path('js/pages')],
+                    ['js', 'jsx', 'svelte', 'ts', 'tsx', 'vue']
+                );
+            });
+        });
+    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        Model::shouldBeStrict(! app()->isProduction());
+
+        if (config('app.env') !== 'local') {
+            URL::forceScheme('https');
+        }
+
+        Nightwatch::rejectQueries(function (Query $query) {
+            $highVolumePatterns = [
+                'monitor_histories',
+                'monitor_performance_hourly',
+                'uptime_last_check_date',
+                'uptime_check_enabled',
+            ];
+
+            foreach ($highVolumePatterns as $pattern) {
+                if (str_contains($query->sql, $pattern)) {
+                    // Drop 95% of these high-volume monitoring queries (keep 5% sample)
+                    return random_int(1, 100) > 5;
+                }
+            }
+
+            return false;
+        });
+
+        Nightwatch::rejectQueuedJobs(function (QueuedJob $job) {
+            if ($job->name === 'Laravel\Telescope\Jobs\ProcessPendingUpdates') {
+                return true;
+            }
+
+            if ($job->name === CalculateMonitorStatisticsJob::class) {
+                // Drop 95% of CalculateMonitorStatisticsJob executions (keep 5% sample)
+                return random_int(1, 100) > 5;
+            }
+
+            return false;
+        });
+
+        LogViewer::auth(fn ($request) => auth()->id() === 1);
+
+        // Register confirmation check listener FIRST to intercept initial failures
+        // This listener will dispatch a delayed confirmation job to reduce false positives
+        Event::listen(UptimeCheckFailed::class, DispatchConfirmationCheck::class);
+
+        // Register uptime monitor event listeners for notifications
+        Event::listen(UptimeCheckFailed::class, SendCustomMonitorNotification::class);
+        Event::listen(UptimeCheckRecovered::class, SendCustomMonitorNotification::class);
+
+        // Register monitor data storage listeners
+        Event::listen(UptimeCheckSucceeded::class, StoreMonitorCheckData::class);
+        Event::listen(UptimeCheckFailed::class, StoreMonitorCheckData::class);
+        Event::listen(UptimeCheckRecovered::class, StoreMonitorCheckData::class);
+
+        // Register SSE broadcast listener for public monitor status changes
+        Event::listen(UptimeCheckFailed::class, BroadcastMonitorStatusChange::class);
+        Event::listen(UptimeCheckRecovered::class, BroadcastMonitorStatusChange::class);
+
+        // Register status page subscriber notifications
+        Event::listen(UptimeCheckFailed::class, NotifyStatusPageSubscribersOnStatusChange::class);
+        Event::listen(UptimeCheckRecovered::class, NotifyStatusPageSubscribersOnStatusChange::class);
+
+        // Log when scheduled tasks are skipped due to overlapping
+        Event::listen(ScheduledTaskSkipped::class, function (ScheduledTaskSkipped $event) {
+            if ($event->task->command !== null && str_contains($event->task->command, 'monitor:check-uptime')) {
+                Log::warning('UPTIME-CHECK: SKIPPED due to overlapping previous run');
+            }
+        });
+
+        Health::checks([
+            CacheCheck::new(),
+            OptimizedAppCheck::new(),
+            DatabaseCheck::new(),
+            UsedDiskSpaceCheck::new()
+                ->warnWhenUsedSpaceIsAbovePercentage(70)
+                ->failWhenUsedSpaceIsAbovePercentage(90),
+            RedisCheck::new(),
+            RedisMemoryUsageCheck::new()
+                ->warnWhenAboveMb(900)
+                ->failWhenAboveMb(1000),
+            CpuLoadCheck::new()
+                ->failWhenLoadIsHigherInTheLast5Minutes(2.0)
+                ->failWhenLoadIsHigherInTheLast5Minutes(5.0)
+                ->failWhenLoadIsHigherInTheLast15Minutes(3.0),
+            ScheduleCheck::new()
+                ->heartbeatMaxAgeInMinutes(2),
+            MonitorCheckDriftCheck::new()
+                ->warnWhenDriftExceedsMinutes(2)
+                ->failWhenDriftExceedsMinutes(5),
+            QueueCheck::new(),
+            // HorizonCheck::new(),
+            // DatabaseSizeCheck::new()
+            //     ->failWhenSizeAboveGb(errorThresholdGb: 5.0),
+            // DatabaseTableSizeCheck::new()
+            //     ->table('monitor_histories', maxSizeInMb: 1_000)
+            //     ->table('monitor_uptime_dailies', maxSizeInMb: 5_00)
+            //     ->table('health_check_result_history_items', maxSizeInMb: 5_00),
+        ]);
+
+        Gate::define('viewPulse', function (User $user) {
+            return $user->isAdmin();
+        });
+    }
+}

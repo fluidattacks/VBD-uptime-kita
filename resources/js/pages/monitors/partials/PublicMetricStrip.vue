@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import Icon from '@/components/Icon.vue';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { computed } from 'vue';
+
+interface Stats {
+    total: number;
+    up: number;
+    down: number;
+    total_public: number;
+    daily_checks?: number;
+    monthly_checks?: number;
+    avg_response_time?: number | null;
+}
+
+const props = defineProps<{
+    stats: Stats;
+    statusFilter: string;
+    avgLatency: string;
+}>();
+
+const emit = defineEmits<{
+    (e: 'filterByStatus', status: string): void;
+}>();
+
+function formatCompactNumber(num?: number): string {
+    if (!num) return '0';
+    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return num.toLocaleString();
+}
+
+const metricItems = computed(() => {
+    const totalPublic = props.stats.total_public || 0;
+    const upCount = props.stats.up || 0;
+    const downCount = props.stats.down || 0;
+    const totalActive = upCount + downCount;
+    const uptimeExact = totalActive > 0 ? ((upCount / totalActive) * 100).toFixed(2).replace(/\.00$/, '') : '100';
+
+    return [
+        {
+            key: 'all',
+            label: 'Monitors',
+            value: formatCompactNumber(props.stats.total_public),
+            tooltip: `${totalPublic.toLocaleString()} total public monitor${totalPublic === 1 ? '' : 's'} tracked`,
+            icon: 'monitor',
+            iconColor: 'text-gray-500 dark:text-gray-400',
+            valueColor: 'text-gray-900 dark:text-white',
+            clickable: true,
+            action: () => emit('filterByStatus', 'all'),
+            active: props.statusFilter === 'all',
+            activeClass: 'bg-blue-50/30 dark:bg-blue-950/20',
+            hasBorderRight: true,
+        },
+        {
+            key: 'up',
+            label: 'Operational',
+            value: formatCompactNumber(props.stats.up),
+            tooltip: `${upCount.toLocaleString()} service${upCount === 1 ? '' : 's'} currently operational`,
+            icon: 'checkCircle',
+            iconColor: 'text-emerald-500',
+            valueColor: 'text-emerald-600 dark:text-emerald-400',
+            clickable: true,
+            action: () => emit('filterByStatus', 'up'),
+            active: props.statusFilter === 'up',
+            activeClass: 'bg-emerald-50/30 dark:bg-emerald-950/20',
+            hasBorderRight: true,
+        },
+        {
+            key: 'down',
+            label: 'Active Incidents',
+            value: String(props.stats.down),
+            tooltip: downCount > 0 ? `${downCount.toLocaleString()} service${downCount === 1 ? '' : 's'} experiencing an active outage` : 'No active outages across monitored services',
+            icon: 'alertCircle',
+            iconColor: 'text-rose-500',
+            valueColor: 'text-rose-600 dark:text-rose-400',
+            clickable: true,
+            action: () => emit('filterByStatus', 'down'),
+            active: props.statusFilter === 'down',
+            activeClass: 'bg-rose-50/30 dark:bg-rose-950/20',
+            hasBorderRight: false,
+        },
+        {
+            key: 'pings',
+            label: '24h Pings',
+            value: props.stats.daily_checks !== undefined && props.stats.daily_checks !== null ? formatCompactNumber(props.stats.daily_checks) : null,
+            tooltip: props.stats.daily_checks !== undefined && props.stats.daily_checks !== null
+                ? `${props.stats.daily_checks.toLocaleString()} total ping checks in the last 24 hours`
+                : 'Pings count loading...',
+            loading: props.stats.daily_checks === undefined,
+            icon: 'globe',
+            iconColor: 'text-indigo-500 dark:text-indigo-400',
+            valueColor: 'text-indigo-600 dark:text-indigo-400',
+            clickable: false,
+            hasBorderRight: true,
+        },
+        {
+            key: 'latency',
+            label: 'Avg Latency',
+            value: props.avgLatency,
+            tooltip: props.stats.avg_response_time !== undefined && props.stats.avg_response_time !== null
+                ? `Precise average response time: ${Math.round(props.stats.avg_response_time)}ms`
+                : `Average response time: ${props.avgLatency}`,
+            loading: props.stats.avg_response_time === undefined && !props.avgLatency,
+            icon: 'zap',
+            iconColor: 'text-amber-500 dark:text-amber-400',
+            valueColor: 'text-amber-600 dark:text-amber-400',
+            clickable: false,
+            hasBorderRight: true,
+        },
+        {
+            key: 'uptime',
+            label: 'Network Uptime',
+            value: `${totalActive > 0 ? Math.round((upCount / totalActive) * 100) : 100}%`,
+            tooltip: `Overall network uptime: ${uptimeExact}% (${upCount.toLocaleString()} / ${totalActive.toLocaleString()} operational among actively monitored services)`,
+            loading: false,
+            icon: 'gauge',
+            iconColor: 'text-emerald-500 dark:text-emerald-400',
+            valueColor: 'text-gray-900 dark:text-white',
+            clickable: false,
+            hasBorderRight: false,
+        },
+    ];
+});
+</script>
+
+<template>
+    <!-- Top Metric Strip: Unified 6-Item Card with Vertical Dividers -->
+    <div
+        class="mb-4 overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-xs sm:rounded-3xl dark:border-gray-800/80 dark:bg-gray-900/90"
+    >
+        <TooltipProvider :delay-duration="100">
+            <div class="grid grid-cols-3 divide-y divide-gray-100 sm:grid-cols-6 sm:divide-x sm:divide-y-0 dark:divide-gray-800/80">
+                <Tooltip v-for="item in metricItems" :key="item.key">
+                    <TooltipTrigger as-child>
+                        <component
+                            :is="item.clickable ? 'button' : 'div'"
+                            type="button"
+                            @click="item.action ? item.action() : undefined"
+                            class="group flex flex-col items-center justify-center px-3 py-4 text-center transition-colors"
+                            :class="[
+                                item.hasBorderRight ? 'border-r border-gray-100 sm:border-r-0 dark:border-gray-800/80' : '',
+                                item.clickable ? 'cursor-pointer hover:bg-gray-50/80 dark:hover:bg-gray-800/40' : '',
+                                item.active ? item.activeClass : '',
+                            ]"
+                        >
+                            <div class="flex items-center gap-1.5">
+                                <Icon :name="item.icon" class="h-4 w-4" :class="item.iconColor" />
+                                <div v-if="item.loading" class="my-0.5 h-6 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-800"></div>
+                                <span v-else class="text-xl font-black tracking-tight sm:text-2xl" :class="item.valueColor">
+                                    {{ item.value }}
+                                </span>
+                            </div>
+                            <span class="mt-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                {{ item.label }}
+                            </span>
+                        </component>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" class="text-center font-medium">
+                        <p>{{ item.tooltip }}</p>
+                    </TooltipContent>
+                </Tooltip>
+            </div>
+        </TooltipProvider>
+    </div>
+</template>

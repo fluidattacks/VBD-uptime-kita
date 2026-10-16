@@ -1,0 +1,28 @@
+<?php
+
+namespace Database\Factories;
+
+use App\Models\Monitor;
+use App\Models\StatusPage;
+use App\Models\StatusPageMonitor;
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+/**
+ * @extends Factory<StatusPageMonitor>
+ */
+class StatusPageMonitorFactory extends Factory
+{
+    /**
+     * Define the model's default state.
+     *
+     * @return array<string, mixed>
+     */
+    public function definition(): array
+    {
+        return [
+            'status_page_id' => StatusPage::factory(),
+            'monitor_id' => Monitor::factory(),
+            'order' => $this->faker->numberBetween(1, 100),
+        ];
+    }
+}

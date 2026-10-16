@@ -1,0 +1,192 @@
+<?php
+
+use App\Http\Controllers\Api\TelemetryReceiverController;
+use App\Http\Controllers\BadgeController;
+use App\Http\Controllers\CustomDomainController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DebugStatsController;
+use App\Http\Controllers\LatestHistoryController;
+use App\Http\Controllers\MonitorCompactController;
+use App\Http\Controllers\MonitorExpirationController;
+use App\Http\Controllers\MonitorExportController;
+use App\Http\Controllers\MonitorHistoryController;
+use App\Http\Controllers\MonitorImportController;
+use App\Http\Controllers\MonitorListController;
+use App\Http\Controllers\OgImageController;
+use App\Http\Controllers\PinnedMonitorController;
+use App\Http\Controllers\PrivateMonitorController;
+use App\Http\Controllers\PublicIncidentController;
+use App\Http\Controllers\PublicMonitorController;
+use App\Http\Controllers\PublicMonitorShowController;
+use App\Http\Controllers\PublicStatusPageController;
+use App\Http\Controllers\PublicToolsController;
+use App\Http\Controllers\StatisticMonitorController;
+use App\Http\Controllers\StatusPageAssociateMonitorController;
+use App\Http\Controllers\StatusPageAvailableMonitorsController;
+use App\Http\Controllers\StatusPageController;
+use App\Http\Controllers\StatusPageDisassociateMonitorController;
+use App\Http\Controllers\StatusPageOrderController;
+use App\Http\Controllers\SubscribeMonitorController;
+use App\Http\Controllers\SubscribeStatusPageController;
+use App\Http\Controllers\TagController;
+use App\Http\Controllers\TelegramWebhookController;
+use App\Http\Controllers\TelemetryDashboardController;
+use App\Http\Controllers\TestFlashController;
+use App\Http\Controllers\ToggleMonitorActiveController;
+use App\Http\Controllers\UnsubscribeMonitorController;
+use App\Http\Controllers\UnsubscribeStatusPageController;
+use App\Http\Controllers\UptimeMonitorController;
+use App\Http\Controllers\UptimesDailyController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\VerifyStatusPageSubscriptionController;
+use App\Http\Middleware\VerifyTelegramWebhookSignature;
+use Illuminate\Support\Facades\Route;
+use Spatie\Health\Http\Controllers\HealthCheckJsonResultsController;
+use Spatie\Health\Http\Controllers\HealthCheckResultsController;
+use Spatie\Health\Http\Controllers\SimpleHealthCheckController;
+
+Route::get('/', [PublicMonitorController::class, 'index'])->name('home');
+
+// Public Free Tools Suite
+Route::prefix('tools')->name('tools.')->group(function () {
+    Route::get('/', [PublicToolsController::class, 'index'])->name('index');
+    Route::get('/website-checker', [PublicToolsController::class, 'websiteChecker'])->name('website-checker');
+    Route::get('/domain-expiration', [PublicToolsController::class, 'domainExpiration'])->name('domain-expiration');
+    Route::get('/ssl-checker', [PublicToolsController::class, 'sslChecker'])->name('ssl-checker');
+    Route::get('/dns-lookup', [PublicToolsController::class, 'dnsLookup'])->name('dns-lookup');
+    Route::get('/headers-checker', [PublicToolsController::class, 'headersChecker'])->name('headers-checker');
+    Route::get('/badge-generator', [PublicToolsController::class, 'badgeGenerator'])->name('badge-generator');
+});
+
+Route::get('/public-monitors', [PublicMonitorController::class, 'index'])->name('monitor.public');
+Route::get('/incidents', [PublicIncidentController::class, 'index'])->name('incidents.public');
+Route::get('/statistic-monitor', StatisticMonitorController::class)->name('monitor.statistic');
+Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+// Public monitor show route (using clean domain as unique key)
+Route::get('/m/{domain}', [PublicMonitorShowController::class, 'show'])
+    ->where('domain', '[a-zA-Z0-9.-]+')
+    ->name('monitor.public.show');
+
+// Badge route for embedding in README/websites (like Shields.io)
+Route::get('/badge/{domain}', [BadgeController::class, 'show'])
+    ->where('domain', '[a-zA-Z0-9.-]+')
+    ->name('badge.show');
+
+// OG Image routes for social media sharing
+Route::prefix('og')->name('og.')->middleware('throttle:60,1')->group(function () {
+    Route::get('/monitors.png', [OgImageController::class, 'monitorsIndex'])->name('monitors');
+    Route::get('/monitor/{domain}.png', [OgImageController::class, 'monitor'])
+        ->where('domain', '[a-zA-Z0-9.-]+')
+        ->name('monitor');
+    Route::get('/status/{path}.png', [OgImageController::class, 'statusPage'])->name('status-page');
+});
+
+// Public status page route
+Route::get('/status/{path}', [PublicStatusPageController::class, 'show'])->name('status-page.public');
+Route::get('/status/{path}/monitors', [PublicStatusPageController::class, 'monitors'])->name('status-page.public.monitors');
+Route::post('/status/{path}/subscribe', SubscribeStatusPageController::class)->name('status-page.subscribe');
+Route::get('/status-subscription/verify/{token}', VerifyStatusPageSubscriptionController::class)->name('status-page.subscription.verify');
+Route::get('/status-subscription/unsubscribe/{token}', UnsubscribeStatusPageController::class)->name('status-page.subscription.unsubscribe');
+Route::get('/monitors/{monitor}/latest-history', LatestHistoryController::class)->name('monitors.latest-history');
+Route::get('/monitors/compact', [MonitorCompactController::class, 'index'])->name('monitors.compact');
+
+// AJAX route for pinned monitors data (returns JSON)
+Route::middleware(['auth'])->group(function () {
+    Route::get('/pinned-monitors', [PinnedMonitorController::class, 'index'])->name('monitors.pinned');
+});
+
+Route::middleware(['auth', 'verified'])->group(function () {
+    // Specific monitor sub-pages (must be before resource route and {type})
+    Route::get('/monitors/expiration', [MonitorExpirationController::class, 'index'])->name('monitors.expiration');
+
+    // Dynamic monitor listing route (for pinned, private, public)
+    Route::get('/monitors/{type}', [MonitorListController::class, 'index'])
+        ->where('type', 'pinned|private|public')
+        ->name('monitors.list');
+
+    // Route untuk private monitor
+    Route::get('/private-monitors', PrivateMonitorController::class)->name('monitors.private');
+
+    // Monitor import routes (must be before resource route to avoid conflict with monitors/{monitor})
+    Route::prefix('monitors/import')->name('monitors.import.')->group(function () {
+        Route::get('/', [MonitorImportController::class, 'index'])->name('index');
+        Route::post('/preview', [MonitorImportController::class, 'preview'])->name('preview');
+        Route::post('/process', [MonitorImportController::class, 'process'])->name('process');
+        Route::get('/sample/csv', [MonitorImportController::class, 'sampleCsv'])->name('sample.csv');
+        Route::get('/sample/json', [MonitorImportController::class, 'sampleJson'])->name('sample.json');
+    });
+
+    // Monitor export routes
+    Route::prefix('monitors/export')->name('monitors.export.')->group(function () {
+        Route::get('/csv', [MonitorExportController::class, 'csv'])->name('csv');
+        Route::get('/json', [MonitorExportController::class, 'json'])->name('json');
+    });
+
+    // Resource route untuk CRUD monitor
+    Route::resource('monitors', UptimeMonitorController::class);
+
+    // Monitor actions
+    Route::post('/monitors/{monitorId}/toggle-pin', [PinnedMonitorController::class, 'toggle'])->name('monitors.toggle-pin');
+    Route::post('/monitors/{monitorId}/toggle-active', ToggleMonitorActiveController::class)->name('monitors.toggle-active');
+    Route::post('/monitors/{monitorId}/subscribe', SubscribeMonitorController::class)->name('monitors.subscribe');
+    Route::delete('/monitors/{monitorId}/unsubscribe', UnsubscribeMonitorController::class)->name('monitors.unsubscribe');
+
+    // Tag routes
+    Route::get('/tags', [TagController::class, 'index'])->name('tags.index');
+    Route::get('/tags/search', [TagController::class, 'search'])->name('tags.search');
+
+    // Monitor history & telemetry routes
+    Route::get('/monitors/{monitor}/history', MonitorHistoryController::class)->name('monitors.history');
+    Route::get('/monitors/{monitor}/uptimes-daily', UptimesDailyController::class)->name('monitors.uptimes-daily');
+
+    // Status page management routes
+    Route::resource('status-pages', StatusPageController::class);
+
+    // Status page monitor association routes
+    Route::post('/status-pages/{statusPage}/monitors', StatusPageAssociateMonitorController::class)->name('status-pages.monitors.associate');
+    Route::delete('/status-pages/{statusPage}/monitors/{monitor}', StatusPageDisassociateMonitorController::class)->name('status-pages.monitors.disassociate');
+    Route::get('/status-pages/{statusPage}/available-monitors', StatusPageAvailableMonitorsController::class)->name('status-pages.monitors.available');
+    Route::post('/status-page-monitor/reorder/{statusPage}', StatusPageOrderController::class)->name('status-page-monitor.reorder');
+
+    // Custom domain routes
+    Route::post('/status-pages/{statusPage}/custom-domain', [CustomDomainController::class, 'update'])->name('status-pages.custom-domain.update');
+    Route::post('/status-pages/{statusPage}/verify-domain', [CustomDomainController::class, 'verify'])->name('status-pages.custom-domain.verify');
+    Route::get('/status-pages/{statusPage}/dns-instructions', [CustomDomainController::class, 'dnsInstructions'])->name('status-pages.custom-domain.dns');
+
+    // User management routes
+    Route::resource('users', UserController::class);
+});
+
+// Test route for flash messages
+Route::get('/test-flash', TestFlashController::class)->name('test.flash');
+
+// Debug route for stats
+Route::get('/debug-stats', DebugStatsController::class)->name('debug.stats')->middleware('auth');
+// route group for health check
+Route::get('/health', SimpleHealthCheckController::class)->name('health.index');
+Route::middleware('auth')->prefix('health')->as('health.')->group(function () {
+    Route::get('/json', HealthCheckJsonResultsController::class)->name('json');
+    Route::get('/results', HealthCheckResultsController::class)->name('results');
+});
+
+Route::prefix('webhook')->as('webhook.')->group(function () {
+    Route::post('/telegram', [TelegramWebhookController::class, 'handle'])
+        ->middleware(VerifyTelegramWebhookSignature::class)
+        ->name('telegram');
+});
+
+// === TELEMETRY API (Public, rate-limited) ===
+// This endpoint receives anonymous telemetry pings from other Uptime-Kita instances
+Route::post('/api/telemetry/ping', [TelemetryReceiverController::class, 'receive'])
+    ->middleware('throttle:60,1')
+    ->name('api.telemetry.ping');
+
+// === TELEMETRY DASHBOARD (Admin-only) ===
+Route::middleware(['auth'])->group(function () {
+    Route::get('/admin/telemetry', [TelemetryDashboardController::class, 'index'])->name('admin.telemetry.index');
+    Route::get('/admin/telemetry/stats', [TelemetryDashboardController::class, 'stats'])->name('admin.telemetry.stats');
+});
+
+require __DIR__.'/settings.php';
+require __DIR__.'/auth.php';

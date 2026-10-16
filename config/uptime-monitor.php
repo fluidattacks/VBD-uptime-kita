@@ -1,0 +1,236 @@
+<?php
+
+use App\Helpers\UptimeResponseCheckers\MemorySafeStringChecker;
+use App\Models\Monitor;
+use Spatie\UptimeMonitor\Notifications\Notifiable;
+use Spatie\UptimeMonitor\Notifications\Notifications\CertificateCheckFailed;
+use Spatie\UptimeMonitor\Notifications\Notifications\CertificateCheckSucceeded;
+use Spatie\UptimeMonitor\Notifications\Notifications\CertificateExpiresSoon;
+use Spatie\UptimeMonitor\Notifications\Notifications\UptimeCheckFailed;
+use Spatie\UptimeMonitor\Notifications\Notifications\UptimeCheckRecovered;
+use Spatie\UptimeMonitor\Notifications\Notifications\UptimeCheckSucceeded;
+
+return [
+
+    /*
+     * You can get notified when specific events occur. Out of the box you can use 'mail'
+     * and 'slack'. Of course you can also specify your own notification classes.
+     */
+    'notifications' => [
+
+        'notifications' => [
+            UptimeCheckFailed::class => [],
+            UptimeCheckRecovered::class => [],
+            UptimeCheckSucceeded::class => [],
+
+            CertificateCheckFailed::class => [],
+            CertificateExpiresSoon::class => [],
+            CertificateCheckSucceeded::class => [],
+        ],
+
+        /*
+         * The location from where you are running this Laravel application. This location will be
+         * mentioned in all notifications that will be sent.
+         */
+        'location' => 'id',
+
+        /*
+         * To keep reminding you that a site is down, notifications
+         * will be resent every given number of minutes.
+         */
+        'resend_uptime_check_failed_notification_every_minutes' => 60,
+
+        'mail' => [
+            'to' => ['mail@syofyanzuhad.dev'],
+        ],
+
+        'slack' => [
+            'webhook_url' => env('UPTIME_MONITOR_SLACK_WEBHOOK_URL'),
+        ],
+
+        /*
+         * Here you can specify the notifiable to which the notifications should be sent. The default
+         * notifiable will use the variables specified in this config file.
+         */
+        'notifiable' => Notifiable::class,
+
+        /*
+         * The date format used in notifications.
+         */
+        'date_format' => 'd/m/Y',
+    ],
+
+    'uptime_check' => [
+
+        /*
+         * When the uptime check could reach the url of a monitor it will pass the response to this class
+         * If this class determines the response is valid, the uptime check will be regarded as succeeded.
+         *
+         * You can use any implementation of Spatie\UptimeMonitor\Helpers\UptimeResponseCheckers\UptimeResponseChecker here.
+         */
+        'response_checker' => MemorySafeStringChecker::class,
+
+        /*
+         * An uptime check will be performed if the last check was performed more than the
+         * given number of minutes ago. If you change this setting you have to manually
+         * update the `uptime_check_interval_in_minutes` value of your existing monitors.
+         *
+         * When an uptime check fails we'll check the uptime for that monitor every time `monitor:check-uptime`
+         * runs regardless of this setting.
+         */
+        'run_interval_in_minutes' => 5,
+
+        /*
+         * Enforce a minimum interval for uptime checks.
+         * Any monitor with an interval lower than this will use this value instead.
+         */
+        'minimum_run_interval_in_minutes' => env('UPTIME_MINIMUM_CHECK_INTERVAL', 0),
+
+        /*
+         * To speed up the uptime checking process the package can perform the uptime check of several
+         * monitors concurrently. Set this to a lower value if you're getting weird errors
+         * running the uptime check.
+         */
+        'concurrent_checks' => (int) env('UPTIME_CONCURRENT_CHECKS', 35),
+
+        /*
+         * When total monitors due for check exceed this threshold, the command automatically
+         * switches from in-process checking to dispatching batched jobs to the queue.
+         */
+        'queue_threshold' => (int) env('UPTIME_QUEUE_THRESHOLD', 5000),
+
+        /*
+         * Number of monitors to assign to each queued batch job when queue dispatching is active.
+         */
+        'batch_size' => (int) env('UPTIME_BATCH_SIZE', 25),
+
+        /*
+         * The uptime check for a monitor will fail if the url does not respond after the
+         * given number of seconds.
+         */
+        'timeout_per_site' => (int) env('UPTIME_TIMEOUT_PER_SITE', 3),
+
+        /*
+         * Because networks can be a bit unreliable the package can make three attempts
+         * to connect to a server in one uptime check. Set to 0 to disable in-loop retries
+         * (recommended when background confirmation checks are enabled).
+         */
+        'retry_connection_after_milliseconds' => (int) env('UPTIME_RETRY_CONNECTION_AFTER_MS', 0),
+
+        /*
+         * If you want to change the default Guzzle client behaviour, you can do so by
+         * passing custom options that will be used when making requests.
+         */
+        'guzzle_options' => [
+            'timeout' => (int) env('UPTIME_TIMEOUT_PER_SITE', 3),
+            'connect_timeout' => (int) env('UPTIME_CONNECT_TIMEOUT', 2),
+            'http_errors' => false,
+            'allow_redirects' => [
+                'max' => 5,
+                'strict' => false,
+                'referer' => false,
+                'protocols' => ['http', 'https'],
+            ],
+            'curl' => [
+                CURLOPT_TCP_NODELAY => true,
+                CURLOPT_TCP_FASTOPEN => true,
+                CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                CURLOPT_DNS_CACHE_TIMEOUT => 300,
+            ],
+        ],
+
+        /*
+         * Fire `Spatie\UptimeMonitor\Events\MonitorFailed` event only after
+         * the given number of uptime checks have consecutively failed for a monitor.
+         */
+        'fire_monitor_failed_event_after_consecutive_failures' => 3,
+
+        /*
+         * When reaching out to sites this user agent will be used.
+         */
+        'user_agent' => null,
+
+        /*
+         * When reaching out to the sites these headers will be added.
+         */
+        'additional_headers' => [],
+
+        /*
+         * All status codes in this array will be interpreted as successful requests.
+         */
+        'additional_status_codes' => [],
+    ],
+
+    'certificate_check' => [
+
+        /*
+         * The `Spatie\UptimeMonitor\Events\SslExpiresSoon` event will fire
+         * when a certificate is found whose expiration date is in
+         * the next number of given days.
+         */
+        'fire_expiring_soon_event_if_certificate_expires_within_days' => 10,
+    ],
+
+    /*
+     * Confirmation check settings for reducing false positives.
+     * When a monitor fails, a confirmation check will be performed
+     * after the specified delay to verify the failure before incrementing
+     * the failure counter.
+     */
+    'confirmation_check' => [
+        /*
+         * Enable or disable confirmation checks.
+         */
+        'enabled' => env('UPTIME_CONFIRMATION_CHECK_ENABLED', true),
+
+        /*
+         * Delay in seconds before performing the confirmation check.
+         */
+        'delay_seconds' => env('UPTIME_CONFIRMATION_CHECK_DELAY', 30),
+
+        /*
+         * Timeout in seconds for the confirmation check request.
+         */
+        'timeout_seconds' => env('UPTIME_CONFIRMATION_CHECK_TIMEOUT', 5),
+    ],
+
+    /*
+     * Number of days to look back for missing daily uptime calculations.
+     * When CalculateMonitorUptimeDailyJob runs, it will auto-detect and calculate
+     * any missing daily records across this lookback window.
+     */
+    'daily_lookback_days' => env('UPTIME_DAILY_LOOKBACK_DAYS', 30),
+
+    /*
+     * Chunk size when dispatching daily uptime calculation jobs to the queue.
+     */
+    'daily_uptime_chunk_size' => (int) env('UPTIME_DAILY_CHUNK_SIZE', 50),
+
+    /*
+     * Scheduling configuration for uptime checks and background jobs.
+     */
+    'schedule' => [
+        'frequency' => env('SCHEDULE_FREQUENCY', 'everyMinute'),
+        'cron' => env('SCHEDULE_CRON'), // example: */10 * * * *
+        'minute' => (int) env('SCHEDULE_MINUTE', 10),
+        'time' => env('SCHEDULE_TIME', '02:30'),
+        'uptime_check_heartbeat_url' => env('UPTIME_CHECK_HEARTBEAT_URL', 'https://hc-ping.com/48755033-52c9-4470-a212-8acac2493f2f'),
+    ],
+
+    /*
+     * Server-Sent Events (SSE) configuration for real-time monitor status updates.
+     */
+    'sse' => [
+        'enabled' => (bool) env('SSE_ENABLED', env('VITE_SSE_ENABLED', true)),
+        'heartbeat_interval' => (int) env('SSE_HEARTBEAT_INTERVAL', 30),
+        'max_duration' => (int) env('SSE_MAX_DURATION', 300),
+        'poll_sleep_microseconds' => (int) (env('SSE_POLL_INTERVAL_MS', 500) * 1000),
+    ],
+
+    /*
+     * To add or modify behaviour to the Monitor model you can specify your
+     * own model here. The only requirement is that it should extend
+     * `Spatie\UptimeMonitor\Models\Monitor`.
+     */
+    'monitor_model' => Monitor::class,
+];

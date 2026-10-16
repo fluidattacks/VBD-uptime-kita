@@ -1,0 +1,88 @@
+<script setup lang="ts">
+import Heading from '@/components/Heading.vue';
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import type { SharedData } from '@/types';
+import { type NavItem } from '@/types';
+import { Link, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
+
+interface ExtendedNavItem extends NavItem {
+    adminOnly?: boolean;
+}
+
+const page = usePage<SharedData>();
+
+const isAdmin = computed(() => page.props.auth?.user?.is_admin ?? false);
+
+const allNavItems: ExtendedNavItem[] = [
+    {
+        title: 'Profile',
+        href: '/settings/profile',
+    },
+    {
+        title: 'Password',
+        href: '/settings/password',
+    },
+    {
+        title: 'Appearance',
+        href: '/settings/appearance',
+    },
+    {
+        title: 'Notifications',
+        href: '/settings/notifications',
+    },
+    {
+        title: 'Database',
+        href: '/settings/database',
+    },
+    {
+        title: 'Server Resources',
+        href: '/settings/server-resources',
+        adminOnly: true,
+    },
+    {
+        title: 'Telemetry',
+        href: '/settings/telemetry',
+        adminOnly: true,
+    },
+];
+
+const sidebarNavItems = computed(() => {
+    return allNavItems.filter((item) => !item.adminOnly || isAdmin.value);
+});
+
+const currentPath = page.props.ziggy?.location ? new URL(page.props.ziggy.location).pathname : '';
+</script>
+
+<template>
+    <div class="px-4 py-6">
+        <Heading title="Settings" description="Manage your profile and account settings" />
+
+        <div class="flex flex-col space-y-8 md:space-y-0 lg:flex-row lg:space-y-0 lg:space-x-12">
+            <aside class="w-full max-w-xl lg:w-48">
+                <nav class="flex flex-col space-y-1 space-x-0">
+                    <Button
+                        v-for="item in sidebarNavItems"
+                        :key="item.href"
+                        variant="ghost"
+                        :class="['w-full justify-start', { 'bg-muted': currentPath === item.href }]"
+                        as-child
+                    >
+                        <Link v-if="item.href" :href="item.href">
+                            {{ item.title }}
+                        </Link>
+                    </Button>
+                </nav>
+            </aside>
+
+            <Separator class="my-6 md:hidden" />
+
+            <div class="flex-1 md:max-w-2xl">
+                <section class="max-w-2xl space-y-12">
+                    <slot />
+                </section>
+            </div>
+        </div>
+    </div>
+</template>

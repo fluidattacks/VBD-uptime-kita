@@ -1,0 +1,122 @@
+import { useStorage, useWebNotification } from '@vueuse/core';
+import { computed, ref } from 'vue';
+
+export interface ToastNotification {
+    id: string;
+    type: 'success' | 'error' | 'warning' | 'info' | 'status-up' | 'status-down';
+    title: string;
+    message: string;
+    duration: number; // ms, 0 = persistent
+    timestamp: Date;
+    data?: Record<string, unknown>;
+}
+
+export type ToastNotificationInput = Omit<ToastNotification, 'id' | 'timestamp' | 'title' | 'duration'> & {
+    title?: string;
+    duration?: number;
+};
+
+const toasts = ref<ToastNotification[]>([]);
+const maxToasts = 5;
+
+// Persistent preference for desktop notifications
+export const desktopNotificationsEnabled = useStorage('uptime_desktop_notifications_enabled', false);
+
+export function useToastNotifications() {
+    const visibleToasts = computed(() => toasts.value.slice(0, maxToasts));
+    const { show, isSupported } = useWebNotification();
+
+    const getDefaultTitle = (type: ToastNotification['type']): string => {
+        switch (type) {
+            case 'success':
+                return 'Success';
+            case 'error':
+                return 'Error';
+            case 'warning':
+                return 'Warning';
+            case 'info':
+                return 'Info';
+            case 'status-up':
+                return 'Service Recovered';
+            case 'status-down':
+                return 'Service Down';
+            default:
+                return 'Notification';
+        }
+    };
+
+    const addToast = (toast: ToastNotificationInput) => {
+        const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const newToast: ToastNotification = {
+            ...toast,
+            id,
+            title: toast.title || getDefaultTitle(toast.type),
+            timestamp: new Date(),
+            duration: toast.duration ?? 5000,
+        };
+
+        toasts.value = [newToast, ...toasts.value];
+
+        // Auto-remove after duration
+        if (newToast.duration > 0) {
+            setTimeout(() => {
+                removeToast(id);
+            }, newToast.duration);
+        }
+
+        return id;
+    };
+
+    const removeToast = (id: string) => {
+        toasts.value = toasts.value.filter((t) => t.id !== id);
+    };
+
+    const clearAllToasts = () => {
+        toasts.value = [];
+    };
+
+    // Convenience methods for monitor status changes
+    const addStatusChangeToast = (change: {
+        monitor_name: string;
+        old_status: 'up' | 'down';
+        new_status: 'up' | 'down';
+        changed_at: string;
+        favicon?: string | null;
+    }) => {
+        const isRecovered = change.new_status === 'up';
+        const title = isRecovered ? 'Service Recovered' : 'Service Down';
+        const message = `${change.monitor_name} is now ${isRecovered ? 'operational' : 'experiencing issues'}`;
+
+        // Trigger desktop notification if enabled, supported, and tab is hidden
+        if (desktopNotificationsEnabled.value && isSupported.value && document.visibilityState === 'hidden') {
+            show({
+                title,
+                body: message,
+                icon: change.favicon || '/favicon.ico',
+                tag: `monitor_${change.monitor_name}`, // Group notifications for same monitor
+                renotify: true,
+            });
+        }
+
+        return addToast({
+            type: isRecovered ? 'status-up' : 'status-down',
+            title,
+            message,
+            duration: 8000, // 8 seconds for status changes
+            data: {
+                ...change,
+            },
+        });
+    };
+
+    return {
+        toasts: visibleToasts,
+        addToast,
+        removeToast,
+        clearAllToasts,
+        addStatusChangeToast,
+    };
+}
+
+// Export a singleton for global use
+export const globalToasts = useToastNotifications();
